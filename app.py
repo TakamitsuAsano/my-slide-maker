@@ -1,0 +1,172 @@
+import streamlit as st
+import json
+import io
+import os
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+import networkx as nx
+from pptx import Presentation
+from pptx.util import Inches, Pt
+
+# --- 1. 日本語フォントの設定 ---
+def setup_japanese_font():
+    # フォントファイルのパス（リポジトリ内の相対パス）
+    font_path = "fonts/ipaexg.ttf" 
+    
+    if os.path.exists(font_path):
+        # フォントマネージャーに追加
+        fm.fontManager.addfont(font_path)
+        # フォントプロパティを取得してMatplotlibのデフォルトに設定
+        font_prop = fm.FontProperties(fname=font_path)
+        plt.rcParams['font.family'] = font_prop.get_name()
+        return font_prop
+    else:
+        st.warning("日本語フォント(fonts/ipaexg.ttf)が見つかりません。文字化けする可能性があります。")
+        return None
+
+# フォント設定を実行
+jp_font = setup_japanese_font()
+
+# --- 2. スライド生成ロジック ---
+def create_slide_deck(json_data):
+    prs = Presentation()
+    
+    for slide_data in json_data:
+        # 白紙スライド (Layout 6)
+        slide_layout = prs.slide_layouts[6] 
+        slide = prs.slides.add_slide(slide_layout)
+        
+        # タイトル
+        title_box = slide.shapes.add_textbox(Inches(0.5), Inches(0.2), Inches(9), Inches(1))
+        tf = title_box.text_frame
+        tf.text = slide_data.get('title', 'No Title')
+        tf.paragraphs[0].font.size = Pt(28)
+        tf.paragraphs[0].font.bold = True
+
+        sType = slide_data.get('type')
+        content = slide_data.get('content', {})
+        
+        # --- Type A: 箇条書き (Standard) ---
+        if sType == 'bullet_points':
+            txBox = slide.shapes.add_textbox(Inches(0.5), Inches(1.5), Inches(9), Inches(5))
+            tf = txBox.text_frame
+            tf.word_wrap = True
+            for item in content.get('points', []):
+                p = tf.add_paragraph()
+                p.text = f"• {item}"
+                p.font.size = Pt(18)
+                p.space_after = Pt(10)
+
+        # --- Type B: 棒グラフ (Simple Chart) ---
+        elif sType == 'bar_chart':
+            fig, ax = plt.subplots(figsize=(8, 4.5))
+            labels = content.get('labels', [])
+            values = content.get('values', [])
+            
+            # デザイン調整
+            ax.bar(labels, values, color='#4A90E2', alpha=0.8)
+            ax.set_title(slide_data.get('title'), fontsize=14)
+            ax.grid(axis='y', linestyle='--', alpha=0.5)
+            
+            # 画像として保存してスライドへ
+            img_stream = io.BytesIO()
+            plt.savefig(img_stream, format='png', bbox_inches='tight', dpi=150)
+            img_stream.seek(0)
+            slide.shapes.add_picture(img_stream, Inches(1), Inches(1.5), width=Inches(8))
+            plt.close()
+
+        # --- Type C: ネットワーク図 (NotebookLM Style) ---
+        elif sType == 'network_graph':
+            fig, ax = plt.subplots(figsize=(8, 5))
+            G = nx.Graph()
+            
+            nodes = content.get('nodes', [])
+            edges = content.get('edges', [])
+            
+            G.add_nodes_from(nodes)
+            G.add_edges_from(edges)
+            
+            # レイアウト計算
+            pos = nx.spring_layout(G, k=0.8, seed=42) # kでノード間隔を調整
+            
+            # ノードとエッジの描画
+            nx.draw_networkx_nodes(G, pos, node_size=2500, node_color='#E8F5E9', edgecolors='#2E7D32', ax=ax)
+            nx.draw_networkx_edges(G, pos, width=2, edge_color='#90A4AE', ax=ax)
+            nx.draw_networkx_labels(G, pos, font_family=jp_font.get_name() if jp_font else 'sans-serif', font_size=11, ax=ax)
+            
+            ax.axis('off') # 軸を消す
+            ax.set_title("Concept Map", fontsize=14, loc='left', color='gray')
+            
+            img_stream = io.BytesIO()
+            plt.savefig(img_stream, format='png', bbox_inches='tight', dpi=150)
+            img_stream.seek(0)
+            slide.shapes.add_picture(img_stream, Inches(1), Inches(1.5), width=Inches(8))
+            plt.close()
+
+        # --- Type D: タイムライン (Infographic) ---
+        elif sType == 'timeline':
+            fig, ax = plt.subplots(figsize=(8, 3))
+            events = content.get('events', []) # list of {"date": "...", "label": "..."}
+            
+            dates = [e['date'] for e in events]
+            labels = [e['label'] for e in events]
+            
+            # 簡易的なタイムライン描画
+            ax.hlines(1, 0, len(dates)-1, color='#FF7043', linewidth=3) # メインライン
+            ax.plot(range(len(dates)), [1]*len(dates), 'o', markersize=10, color='#FF7043') # 点
+            
+            # テキスト配置
+            for i, (date, label) in enumerate(zip(dates, labels)):
+                ax.text(i, 1.1, date, ha='center', fontsize=10, color='gray')
+                ax.text(i, 0.8, label, ha='center', va='top', fontsize=12, fontweight='bold')
+                
+            ax.axis('off')
+            ax.set_ylim(0.5, 1.5)
+            
+            img_stream = io.BytesIO()
+            plt.savefig(img_stream, format='png', bbox_inches='tight', dpi=150)
+            img_stream.seek(0)
+            slide.shapes.add_picture(img_stream, Inches(1), Inches(2.5), width=Inches(8))
+            plt.close()
+
+    # PPTX保存処理
+    output = io.BytesIO()
+    prs.save(output)
+    output.seek(0)
+    return output
+
+# --- 3. Streamlit UI ---
+st.set_page_config(page_title="AI Visual Slide Gen", layout="wide")
+
+col1, col2 = st.columns([1, 1])
+
+with col1:
+    st.title("🤖 Info-Graph Slide Generator")
+    st.markdown("""
+    **Geminiで作ったJSONを貼るだけ**で、構造化されたビジュアルスライドを生成します。
+    NotebookLMのような概念図や、タイムラインも自動描画します。
+    """)
+    
+    st.info("💡 使い方: Geminiに専用プロンプトを投げて、出てきたJSONを右のボックスに貼り付けてください。")
+
+with col2:
+    json_input = st.text_area("JSON Input:", height=400, placeholder='[Paste JSON code here...]')
+    
+    if st.button("🚀 Generate Slides", type="primary"):
+        if json_input:
+            with st.spinner('Generating visuals & slides...'):
+                try:
+                    data = json.loads(json_input)
+                    pptx_file = create_slide_deck(data)
+                    
+                    st.success("完了しました！")
+                    st.download_button(
+                        label="📥 Download .pptx",
+                        data=pptx_file,
+                        file_name="visual_presentation.pptx",
+                        mime="application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    )
+                except json.JSONDecodeError:
+                    st.error("JSONの形式が間違っています。括弧の閉じ忘れなどを確認してください。")
+                except Exception as e:
+                    st.error(f"エラーが発生しました: {e}")
