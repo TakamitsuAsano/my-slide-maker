@@ -138,25 +138,49 @@ def create_slide_deck(json_data):
             slide.shapes.add_picture(img_stream, Inches(1), Inches(1.5), width=Inches(8))
             plt.close()
 
-        # --- Type D: タイムライン (Infographic) ---
+       # --- Type D: タイムライン (修正版: 頑丈なデータ処理) ---
         elif sType == 'timeline':
             fig, ax = plt.subplots(figsize=(8, 3))
-            events = content.get('events', []) # list of {"date": "...", "label": "..."}
             
-            dates = [e['date'] for e in events]
-            labels = [e['label'] for e in events]
+            # コンテンツの取得（eventsキーがない場合はcontentそのものをリストとして扱う）
+            events = content.get('events', [])
+            if not events and isinstance(content, list):
+                events = content
             
-            # 簡易的なタイムライン描画
-            ax.hlines(1, 0, len(dates)-1, color='#FF7043', linewidth=3) # メインライン
-            ax.plot(range(len(dates)), [1]*len(dates), 'o', markersize=10, color='#FF7043') # 点
+            dates = []
+            labels = []
+
+            # 柔軟なキー読み取り処理
+            for e in events:
+                if isinstance(e, dict):
+                    # 日付っぽいキーを探す
+                    d = e.get('date') or e.get('year') or e.get('time') or e.get('Date') or "N/A"
+                    # ラベルっぽいキーを探す
+                    l = e.get('label') or e.get('title') or e.get('event') or e.get('Label') or "No Label"
+                    
+                    dates.append(str(d))
+                    labels.append(str(l))
             
-            # テキスト配置
-            for i, (date, label) in enumerate(zip(dates, labels)):
-                ax.text(i, 1.1, date, ha='center', fontsize=10, color='gray')
-                ax.text(i, 0.8, label, ha='center', va='top', fontsize=12, fontweight='bold')
+            # データがある場合のみ描画
+            if dates:
+                # 簡易的なタイムライン描画
+                ax.hlines(1, 0, len(dates)-1, color='#FF7043', linewidth=3) # メインライン
+                ax.plot(range(len(dates)), [1]*len(dates), 'o', markersize=10, color='#FF7043') # 点
                 
-            ax.axis('off')
-            ax.set_ylim(0.5, 1.5)
+                # テキスト配置
+                for i, (date, label) in enumerate(zip(dates, labels)):
+                    # 日付（上側）
+                    ax.text(i, 1.15, date, ha='center', fontsize=10, color='gray')
+                    # ラベル（下側・折り返し対応）
+                    # 長いラベルは改行を入れる簡易処理
+                    display_label = label[:10] + '...' if len(label) > 10 else label
+                    ax.text(i, 0.85, display_label, ha='center', va='top', fontsize=12, fontweight='bold')
+                    
+                ax.axis('off')
+                ax.set_ylim(0.5, 1.5)
+            else:
+                ax.text(0.5, 0.5, "No Timeline Data", ha='center', va='center')
+                ax.axis('off')
             
             img_stream = io.BytesIO()
             plt.savefig(img_stream, format='png', bbox_inches='tight', dpi=150)
