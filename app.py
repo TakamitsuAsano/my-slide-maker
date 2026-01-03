@@ -75,26 +75,61 @@ def create_slide_deck(json_data):
             slide.shapes.add_picture(img_stream, Inches(1), Inches(1.5), width=Inches(8))
             plt.close()
 
-        # --- Type C: ネットワーク図 (NotebookLM Style) ---
+       # --- Type C: ネットワーク図 (修正版: 頑丈なデータ処理) ---
         elif sType == 'network_graph':
             fig, ax = plt.subplots(figsize=(8, 5))
             G = nx.Graph()
             
-            nodes = content.get('nodes', [])
-            edges = content.get('edges', [])
+            # --- データの正規化処理 ---
+            raw_nodes = content.get('nodes', [])
+            raw_edges = content.get('edges', [])
             
-            G.add_nodes_from(nodes)
-            G.add_edges_from(edges)
+            clean_nodes = []
+            clean_edges = []
+
+            # Nodesのクリーニング（文字列のリストにする）
+            for n in raw_nodes:
+                if isinstance(n, str):
+                    clean_nodes.append(n)
+                elif isinstance(n, list) and len(n) > 0:
+                    clean_nodes.append(str(n[0])) # ["A"] -> "A"
+                elif isinstance(n, dict):
+                    # {"name": "A"} -> "A" (最初の値を採用)
+                    clean_nodes.append(str(list(n.values())[0]))
+
+            # Edgesのクリーニング（[source, target]のリストにする）
+            for e in raw_edges:
+                if isinstance(e, list) and len(e) >= 2:
+                    clean_edges.append((str(e[0]), str(e[1])))
+                elif isinstance(e, dict):
+                    # {"source": "A", "target": "B"} -> ("A", "B")
+                    vals = list(e.values())
+                    if len(vals) >= 2:
+                        clean_edges.append((str(vals[0]), str(vals[1])))
+
+            # グラフの構築（データがあれば）
+            if clean_nodes:
+                G.add_nodes_from(clean_nodes)
+            if clean_edges:
+                G.add_edges_from(clean_edges)
             
-            # レイアウト計算
-            pos = nx.spring_layout(G, k=0.8, seed=42) # kでノード間隔を調整
+            # データが空の場合の安全策
+            if G.number_of_nodes() == 0:
+                ax.text(0.5, 0.5, "No Data for Graph", ha='center', va='center')
+            else:
+                # レイアウト計算
+                try:
+                    pos = nx.spring_layout(G, k=0.8, seed=42)
+                    nx.draw_networkx_nodes(G, pos, node_size=2000, node_color='#E8F5E9', edgecolors='#2E7D32', ax=ax)
+                    nx.draw_networkx_edges(G, pos, width=2, edge_color='#90A4AE', ax=ax)
+                    # フォント設定の安全策
+                    f_family = jp_font.get_name() if jp_font else 'sans-serif'
+                    nx.draw_networkx_labels(G, pos, font_family=f_family, font_size=11, ax=ax)
+                except Exception as ex:
+                    # 描画エラー時も落ちないようにする
+                    ax.text(0.5, 0.5, f"Graph Error: {ex}", ha='center', va='center')
             
-            # ノードとエッジの描画
-            nx.draw_networkx_nodes(G, pos, node_size=2500, node_color='#E8F5E9', edgecolors='#2E7D32', ax=ax)
-            nx.draw_networkx_edges(G, pos, width=2, edge_color='#90A4AE', ax=ax)
-            nx.draw_networkx_labels(G, pos, font_family=jp_font.get_name() if jp_font else 'sans-serif', font_size=11, ax=ax)
-            
-            ax.axis('off') # 軸を消す
+            ax.axis('off')
             ax.set_title("Concept Map", fontsize=14, loc='left', color='gray')
             
             img_stream = io.BytesIO()
